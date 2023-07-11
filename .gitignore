@@ -1,0 +1,10 @@
+/TestDiff
+/TestSim
+/Test
+/TrainDiff
+/TrainSim
+/Train
+kaggle.json
+*.zip
+*.png
+*cache*

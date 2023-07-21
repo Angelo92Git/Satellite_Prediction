@@ -43,7 +43,8 @@ for sat_id in tqdm(train['sat_id'].unique(), position=0):
     
         group = group.drop(group[group['x'].isnull()].index)
         group['percent'] = np.arange(1, len(group)+1) / len(group)
-    
+
+
         if dataset is train:
             train_intermediate.append(group)
         if dataset is test:
@@ -59,7 +60,7 @@ print(f"Processed {len(test.sat_id.unique())} unique satellites, with {len(test)
 df = pd.concat([train, test], axis=0)
 df = df.sort_values(['sat_id', 'epoch'])
 #endregion
-    
+
     
 #region 3 Data Validation
 for data_split, data in [('train', train), ('train', test)]:
@@ -76,6 +77,20 @@ for data_split, data in [('train', train), ('train', test)]:
         assert all(list(map(lambda pair: (pair[0] - pair[1]) < 0.01, cartesian_product))), f'Intervals are not consistent: there are {len(intervals)} unique intervals for sat_id {sat_id} in the {data_split} dataset.'
 #endregion
 
+df.reset_index(drop=True, inplace=True)
+df2_intermediate = []
+for sat_id, sat_group in tqdm(df.groupby('sat_id'), position=0, leave=False):
+    correct_interval = sat_group['epoch'].diff().dt.total_seconds().mode()
+    correct_times = pd.Series(pd.date_range(start=sat_group['epoch'].min(), freq=f"{int(correct_interval*1000)}ms", periods=len(sat_group)))
+    correct_times.index = sat_group.iloc[:, 0].index
+    comparison = abs(sat_group.iloc[:, 0] - correct_times) < dt.timedelta(seconds=2)
+    if not(sat_id == 272 or sat_id == 358 or sat_id == 429):
+        assert comparison.all(), f"Epoch is not consistent for sat_id {sat_id}."
+    sat_group['epoch'] = correct_times
+    df2_intermediate.append(sat_group)
+
+df2 = pd.concat(df2_intermediate).sort_values(['sat_id', 'epoch'])
+
 with open('validated_data.pkl', 'wb') as f:
-    pkl.dump(df, f)
+    pkl.dump(df2, f)
     

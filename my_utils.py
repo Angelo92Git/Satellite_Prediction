@@ -65,9 +65,9 @@ def plot_AR_forecast(df, sat_id, var, model_fit):
     center = np.mean(var_all)
     height = np.max(var_all) - np.min(var_all)
     plt.xticks(rotation=45)
+    plt.plot([t_train.iloc[-1], t_train.iloc[-1]],[-90000 , 90000], color = 'k')
     plt.ylim(center - 0.6*height, center + 0.6*height)
     plt.xlim(t_all.iloc[0], t_all.iloc[-1])
-    plt.plot([t_train.iloc[-1], t_train.iloc[-1]],[-70000 , 70000], color = 'k')
     plt.tight_layout()
     plt.show()
     return

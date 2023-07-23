@@ -37,7 +37,7 @@ for i, var in enumerate(vars):
     axs[i].set_title(f'{var}')
     plt.tight_layout()
 
-plt.show()
+# plt.show()
 # plt.savefig('Results/sat_id_with_scores_best_lags.png')
 plt.close('all')
 

@@ -43,8 +43,14 @@ def sliding_window_cv(train, num_fits=4):
         split_val = train.iloc[i*foldsize+windowsize:i*foldsize+windowsize+horizon]
         yield (split_train, split_val)
 
-def plot_AR_forecast(df, sat_id, var, model_fit):
-    fig = plt.figure()
+def holdout_cv(train, num_fits=0.75):
+    trainsize = int(len(train)*num_fits)
+    split_train = train.iloc[:trainsize]
+    split_val = train.iloc[trainsize:]
+    return ((split_train, split_val),)
+
+def plot_AR_forecast(df, sat_id, var, model_fit, comment):
+    fig = plt.figure(figsize=(22,3))
     t_all = df.query(f'sat_id=={sat_id}')['epoch']
     var_all = df.query(f'sat_id=={sat_id}')[var]
     t_train = df.query(f'sat_id=={sat_id} and is_train==True')['epoch']
@@ -58,19 +64,22 @@ def plot_AR_forecast(df, sat_id, var, model_fit):
     preds_int = preds_obj.conf_int(alpha=0.05)
     plt.plot(t_all, preds, 'red', label='AR model')
     plt.fill_between(t_all, preds_int['lower'], preds_int['upper'], color='k', alpha=0.2)
-    plt.xlabel('Time')
-    plt.ylabel(var)
-    plt.title(f'AR model for sat_id {sat_id} and variable {var}')
-    plt.legend(loc='upper right')
+    plt.xlabel('Time', fontsize=20)
+    plt.ylabel(var, fontsize=20)
+    plt.title(f'AR model for sat_id {sat_id} and variable {var}, {comment}', fontsize=20)
+    plt.legend(loc='upper left', fontsize=17)
     center = np.mean(var_all)
     height = np.max(var_all) - np.min(var_all)
-    plt.xticks(rotation=45)
+    plt.xticks(rotation=0)
     plt.plot([t_train.iloc[-1], t_train.iloc[-1]],[-90000 , 90000], color = 'k')
     plt.ylim(center - 0.6*height, center + 0.6*height)
     plt.xlim(t_all.iloc[0], t_all.iloc[-1])
     plt.tight_layout()
-    plt.show()
-    return
+    plt.subplots_adjust(top=0.87)
+    # plt.show()
+    plt.savefig(f'Results/AR_forecast_{sat_id}_{var}_{comment}.png')
+    plt.close('all')
+    return fig
 
 def plot_CV(df, sat_id, cv_func, num_fits=4, num_lags=50):
     sat_group = df.query(f'sat_id=={sat_id}')
@@ -127,6 +136,84 @@ def plot_CV(df, sat_id, cv_func, num_fits=4, num_lags=50):
     plt.close('all')
     return
 
+def plot_CV_fig(df, sat_id, cv_func, method, method_c, num_fits=4, num_lags=50):
+    sat_group = df.query(f'sat_id=={sat_id}')
+    sat_group = set_epoch_as_index_and_freq(sat_group)
+    train = sat_group.query('is_train == True')
+    cv_smape_accuracy_lag = []
+    cv_vec_smape_accuracy_lag = []
+    lags_used = []
+    for lags in tqdm(np.arange(1, num_lags+1), position=1, leave=False, desc = 'Lags'):
+        cv_smape_accuracy = []
+        all_vec_targets = []
+        all_vec_forecasts = []
+        for cv_train, cv_val in cv_func(train, num_fits=num_fits):
+            if len(cv_train)-lags <= lags+2:
+                continue
+            all_vec_targets.append(cv_val[['x', 'y', 'z', 'Vx', 'Vy', 'Vz']].to_numpy().reshape(-1,6)) 
+            var_vec_forecasts = []
+            for var in tqdm(['x', 'y', 'z', 'Vx', 'Vy', 'Vz'], position=2, leave=False, desc = 'Variables'):
+                cv_model = AutoReg(cv_train[var], lags=lags, trend = 'ct')
+                cv_model_fit = cv_model.fit()
+                cv_forecast = cv_model_fit.forecast(steps=len(cv_val))
+                cv_smape_accuracy.append(mm.smape(cv_val[var], cv_forecast))
+
+                var_vec_forecasts.append(cv_forecast.to_numpy().reshape(-1,1))
+
+            fold_vec_forecasts = np.concatenate(var_vec_forecasts, axis=1)
+            all_vec_forecasts.append(fold_vec_forecasts)
+        
+        if not cv_smape_accuracy or not all_vec_targets: # Check if empty
+            continue
+        
+        lags_used.append(lags)
+        cv_smape_accuracy_lag.append(np.mean(cv_smape_accuracy))
+        
+        all_vec_targets = np.concatenate(all_vec_targets, axis=0)
+        all_vec_forecasts = np.concatenate(all_vec_forecasts, axis=0)
+        cv_vec_smape_accuracy_lag.append(mm.vector_smape(all_vec_targets, all_vec_forecasts))
+    
+    x_plot = lags_used
+    y1_plot = cv_smape_accuracy_lag
+    y2_plot = cv_vec_smape_accuracy_lag
+    best_lag = np.argmin(y1_plot)+1
+    # plt.plot(x_plot, y1_plot, label='SMAPE')
+    plt.plot(x_plot, y2_plot, color=method_c, label=f'Vector SMAPE using {method}')
+    plt.xlabel('Lags')
+    plt.ylabel('CV score')
+    plt.title(f'Cross-validation score for sat_id {sat_id}')
+    plt.legend(loc='upper right')
+    plt.xlim(1, np.max(lags_used))
+    plt.ylim(0, 1)
+    plt.plot([best_lag, best_lag],[0 , 1], color = method_c)
+    plt.tight_layout()
+    # plt.savefig(f'Results/CV_accuracy_{sat_id}.png')
+    # plt.close('all')
+    return
+
+def acf(df, sat_id, var, lags=50):
+    sat_group = df.query(f'sat_id=={sat_id}')
+    sat_group = set_epoch_as_index_and_freq(sat_group)
+    train = sat_group.query('is_train == True')
+    sm.graphics.tsa.plot_acf(train[var], lags=lags, bartlett_confint=False, fft=True)
+    plt.title(f'ACF for sat_id {sat_id} and variable {var}')
+    plt.xlabel('Lags')
+    plt.ylabel('ACF')
+    plt.savefig(f'Results/ACF_{sat_id}_{var}.png')
+    plt.close('all')
+    return
+
+def pcf(df, sat_id, var, lags=50):
+    sat_group = df.query(f'sat_id=={sat_id}')
+    sat_group = set_epoch_as_index_and_freq(sat_group)
+    train = sat_group.query('is_train == True')
+    sm.graphics.tsa.plot_pacf(train[var], lags=lags)
+    plt.title(f'PACF for sat_id {sat_id} and variable {var}')
+    plt.xlabel('Lags')
+    plt.ylabel('PACF')
+    plt.savefig(f'Results/PACF_{sat_id}_{var}.png')
+    plt.close('all')
+    return
 
 # with open('validated_data.pkl', 'rb') as f:
 #     df = pkl.load(f)
